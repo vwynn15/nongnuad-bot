@@ -160,12 +160,11 @@ async function parseSlipWithAI(imageBuffer) {
   const model = genAI.getGenerativeModel({ 
     model: "gemini-1.5-flash",
     // 💡 จุดสำคัญ: บังคับให้ Output ออกมาเป็นโครงสร้าง JSON ตาม Schema ด้านบน
-    generationConfig: {
+generationConfig: {
       responseMimeType: "application/json",
       responseSchema: jsonSchema,
     }
   });
-
   const prompt = `คุณคือ AI ผู้ช่วยตรวจสอบและดึงข้อมูลจากสลิปโอนเงินหรือสลิปใช้จ่ายของประเทศไทย กรุณาอ่านข้อมูลจากรูปภาพสลิปที่แนบมานี้อย่างละเอียด แล้วสรุปข้อมูลลงในฟิลด์ที่กำหนด`;
 
   const imagePart = {
