@@ -12,7 +12,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const client = new line.Client(config);
 const app = express();
 
-// Middleware สำหรับรับ Webhook จาก LINE
+// Middleware รับ Webhook จาก LINE
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -29,13 +29,13 @@ async function handleEvent(event) {
   const messageType = event.message.type;
 
   // ----------------------------------------------------
-  // กรณีที่ 1: พี่วิวส่ง "รูปภาพสลิป" เข้ามา
+  // กรณีที่ 1: ส่ง "รูปภาพสลิป" เข้ามา
   // ----------------------------------------------------
   if (messageType === 'image') {
     try {
       const messageId = event.message.id;
       
-      // ดึงรูปภาพจาก LINE มาแปลงเป็น Buffer
+      // ดึงรูปภาพจาก LINE API เป็น Stream แล้วรวมเป็น Buffer
       const stream = await client.getMessageContent(messageId);
       const chunks = [];
       for await (const chunk of stream) {
@@ -43,23 +43,24 @@ async function handleEvent(event) {
       }
       const imageBuffer = Buffer.concat(chunks);
 
-      // ส่งให้ AI Gemini ช่วยอ่านสลิป
+      // ส่งภาพไปให้ Gemini ประมวลผล
       const slipData = await parseSlipWithAI(imageBuffer);
 
-      if (!slipData || !slipData.isValidSlip) {
+      if (!slipData || slipData.isValidSlip === false) {
         return client.replyMessage(event.replyToken, {
           type: 'text',
-          text: '🐥 น้องเจี๊ยบ: "ภาพนี้ดูเหมือนไม่ใช่สลิปโอนเงินนะค้าบพี่วิว ลองส่งสลิปใหม่อีกทีน้า!"'
+          text: '🐥 น้องเจี๊ยบ: "ภาพนี้ดูเหมือนไม่ใช่สลิปโอนเงินนะค้าบพี่วิว หรืออ่านข้อมูลไม่ชัดเจน ลองส่งใหม่อีกทีน้า!"'
         });
       }
 
-      // บันทึกลงฐานข้อมูล & คำนวณเหรียญให้น้องหนวด
+      // คำนวณเหรียญและตอบกลับ
       const earnedCoins = 10;
+      const isIncome = slipData.type === 'INCOME';
 
       const replyText = 
         `📸 **บันทึกสลิปอัตโนมัติสำเร็จ!**\n` +
         `--------------------------\n` +
-        `💸 ประเภท: ${slipData.type === 'INCOME' ? 'รายรับ 🟢' : 'รายจ่าย 🔴'}\n` +
+        `💸 ประเภท: ${isIncome ? 'รายรับ 🟢' : 'รายจ่าย 🔴'}\n` +
         `💰 จำนวน: ${slipData.amount} บาท\n` +
         `🏪 ร้านค้า/ผู้รับ: ${slipData.merchant || 'ไม่ระบุ'}\n` +
         `📂 หมวดหมู่: ${slipData.category || 'ทั่วไป'}\n\n` +
@@ -69,9 +70,9 @@ async function handleEvent(event) {
       return client.replyMessage(event.replyToken, { type: 'text', text: replyText });
 
     } catch (error) {
-      console.error('=== DEBUG SLIP ERROR ===');
-      console.error(error);
-      console.error('========================');
+      console.error('=== DEBUG SLIP OCR ERROR ===');
+      console.error(error.message || error);
+      console.error('============================');
 
       return client.replyMessage(event.replyToken, {
         type: 'text',
@@ -81,12 +82,12 @@ async function handleEvent(event) {
   }
 
   // ----------------------------------------------------
-  // กรณีที่ 2: พิมพ์ข้อความจดบันทึก หรือ กดปุ่ม Rich Menu
+  // กรณีที่ 2: พิมพ์ข้อความ หรือ กดปุ่ม Rich Menu
   // ----------------------------------------------------
   if (messageType === 'text') {
     const text = event.message.text.trim();
 
-    // 💡 ปรับเปลี่ยนข้อความปุ่มช่องแรกบน (กระปุกเงินออม) ให้เข้าสู่เว็บ SpendWise x น้องหนวด
+    // ปุ่มแรก: บันทึกรายรับรายจ่าย / SpendWise
     if (text === 'กระปุกเงินออม' || text === 'SpendWise' || text === 'บันทึกรายรับรายจ่าย') {
       return client.replyMessage(event.replyToken, {
         type: 'text',
@@ -103,6 +104,7 @@ async function handleEvent(event) {
       });
     }
 
+    // จดบันทึกด้วยข้อความ (เช่น -150 ค่าอาหาร, +5000 เงินเดือน)
     if (text.startsWith('+') || text.startsWith('-')) {
       const isIncome = text.startsWith('+');
       const parts = text.slice(1).trim().split(' ');
@@ -136,40 +138,48 @@ async function handleEvent(event) {
   }
 }
 
-// 3. ฟังก์ชัน AI อ่านสลิปด้วย Gemini 1.5 Flash
+// 3. ฟังก์ชัน AI อ่านสลิปด้วย Gemini 1.5 Flash (สกัด JSON แบบคลีนปลอดภัย)
 async function parseSlipWithAI(imageBuffer) {
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   const prompt = `
-    คุณคือ AI ผู้ช่วยตรวจสอบสลิปโอนเงินของไทย กรุณาอ่านข้อมูลจากรูปภาพสลิปนี้ แล้วตอบกลับด้วย JSON เท่านั้นตามโครงสร้างนี้ (ห้ามใส่คำอธิบายเพิ่มเติม ห้ามใส่ markdown code block):
+    คุณคือระบบ OCR วิเคราะห์สลิปโอนเงินธนาคารของประเทศไทย 
+    โปรดอ่านข้อมูลจากรูปภาพที่แนบมานี้อย่างละเอียด และตอบกลับเป็น JSON เท่านั้น โดยมีโครงสร้างดังนี้:
     {
-      "type": "EXPENSE",
+      "type": "EXPENSE", 
       "amount": 12.00,
-      "merchant": "ชื่อผู้รับเงิน หรือ ร้านค้า",
-      "category": "อาหาร",
+      "merchant": "ชื่อผู้รับเงิน หรือ ชื่อร้านค้า",
+      "category": "หมวดหมู่ภาษาไทย (เช่น อาหาร, ช้อปปิ้ง, ค่าเดินทาง, ทั่วไป)",
       "isValidSlip": true
     }
+
+    เงื่อนไข:
+    1. ถ้าเป็สลิปโอนเงิน/ชำระเงิน ให้ "type" เป็น "EXPENSE" และ "isValidSlip" เป็น true
+    2. "amount" ต้องเป็นตัวเลขถอน/จ่ายจริง (ทศนิยม)
+    3. ตอบกลับเป็น JSON เท่านั้น ห้ามใส่ข้อความอธิบายใดๆ นอกเหนือจาก JSON
   `;
 
   const imagePart = {
     inlineData: {
       data: imageBuffer.toString('base64'),
-      mimeType: 'image/jpeg',
-    },
+      mimeType: 'image/jpeg'
+    }
   };
 
   const result = await model.generateContent([prompt, imagePart]);
-  const responseText = result.response.text().trim();
-  
+  const responseText = result.response.text();
+
+  // ดึงสกัดเอาเฉพาะก้อน JSON { ... }
   const jsonMatch = responseText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
-    throw new Error("Cannot parse JSON from Gemini response");
+    throw new Error("ไม่สามารถดึงโครงสร้าง JSON จากคำตอบของ Gemini ได้");
   }
 
-  return JSON.parse(jsonMatch[0]);
+  const parsedData = JSON.parse(jsonMatch[0]);
+  return parsedData;
 }
 
-// เปิดรัน Server
+// เปิด Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🐱 Nong Nuad Bot Server is running on port ${PORT}`);
