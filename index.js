@@ -1,6 +1,6 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
-const { GoogleGenerativeAI, Type } = require('@google/generative-ai'); // 👈 เพิ่ม Type เข้ามาสำหรับกำหนด Schema
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 1. ตั้งค่า LINE และ Gemini API Key
 const config = {
@@ -69,7 +69,6 @@ async function handleEvent(event) {
       return client.replyMessage(event.replyToken, { type: 'text', text: replyText });
 
     } catch (error) {
-      // ปริ้นท์ Error ลงใน Render Logs เพื่อการตรวจสอบ
       console.error('=== DEBUG SLIP ERROR ===');
       console.error(error);
       console.error('========================');
@@ -127,45 +126,20 @@ async function handleEvent(event) {
   }
 }
 
-// 3. ฟังก์ชัน AI อ่านสลิปด้วย Gemini (แก้ไขแล้ว 🛠️)
+// 3. ฟังก์ชัน AI อ่านสลิปด้วย Gemini 1.5 Flash (เสถียรที่สุด)
 async function parseSlipWithAI(imageBuffer) {
-  // สร้างโครงสร้าง Schema เพื่อบังคับให้ Gemini ตอบกลับมาเป็น JSON รูปแบบนี้เท่านั้น
-  const jsonSchema = {
-    type: Type.OBJECT,
-    properties: {
-      type: { 
-        type: Type.STRING, 
-        description: "ประเภทรายการ เช่น INCOME (รายรับ) หรือ EXPENSE (รายจ่าย)" 
-      },
-      amount: { 
-        type: Type.NUMBER, 
-        description: "จำนวนเงินในสลิป (ทศนิยม 2 ตำแหน่ง)" 
-      },
-      merchant: { 
-        type: Type.STRING, 
-        description: "ชื่อผู้รับเงิน หรือ ชื่อร้านค้า" 
-      },
-      category: { 
-        type: Type.STRING, 
-        description: "หมวดหมู่ของค่าใช้จ่าย เช่น อาหาร, เดินทาง, ช้อปปิ้ง, ทั่วไป" 
-      },
-      isValidSlip: { 
-        type: Type.BOOLEAN, 
-        description: "ระบุว่าเป็นสลิปธนาคารที่ถูกต้องใช่หรือไม่ (true/false)" 
-      }
-    },
-    required: ["type", "amount", "merchant", "category", "isValidSlip"],
-  };
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-  const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
-    // 💡 จุดสำคัญ: บังคับให้ Output ออกมาเป็นโครงสร้าง JSON ตาม Schema ด้านบน
-generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: jsonSchema,
+  const prompt = `
+    คุณคือ AI ผู้ช่วยตรวจสอบสลิปโอนเงินของไทย กรุณาอ่านข้อมูลจากรูปภาพสลิปนี้ แล้วตอบกลับด้วย JSON เท่านั้นตามโครงสร้างนี้ (ห้ามใส่คำอธิบายเพิ่มเติม ห้ามใส่ markdown code block):
+    {
+      "type": "EXPENSE",
+      "amount": 12.00,
+      "merchant": "ชื่อผู้รับเงิน หรือ ร้านค้า",
+      "category": "อาหาร",
+      "isValidSlip": true
     }
-  });
-  const prompt = `คุณคือ AI ผู้ช่วยตรวจสอบและดึงข้อมูลจากสลิปโอนเงินหรือสลิปใช้จ่ายของประเทศไทย กรุณาอ่านข้อมูลจากรูปภาพสลิปที่แนบมานี้อย่างละเอียด แล้วสรุปข้อมูลลงในฟิลด์ที่กำหนด`;
+  `;
 
   const imagePart = {
     inlineData: {
@@ -177,8 +151,13 @@ generationConfig: {
   const result = await model.generateContent([prompt, imagePart]);
   const responseText = result.response.text().trim();
   
-  // ผลลัพธ์ที่ได้จะเป็น JSON String แท้ๆ 100% ไม่มีอักขระแถม สามารถ parse ได้อย่างปลอดภัย
-  return JSON.parse(responseText);
+  // แกะเอาเฉพาะส่วนที่เป็น JSON ป้องกันกรณี AI ใส่ข้อความอื่นแถมมา
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error("Cannot parse JSON from Gemini response");
+  }
+
+  return JSON.parse(jsonMatch[0]);
 }
 
 // เปิดรัน Server
