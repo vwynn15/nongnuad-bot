@@ -29,7 +29,7 @@ async function handleEvent(event) {
   const messageType = event.message.type;
 
   // ----------------------------------------------------
-  // กรณีที่ 1: ส่ง "รูปภาพสลิป" เข้ามา
+  // กรณีที่ 1: พี่วิวส่ง "รูปภาพสลิป" เข้ามา
   // ----------------------------------------------------
   if (messageType === 'image') {
     try {
@@ -70,7 +70,7 @@ async function handleEvent(event) {
 
     } catch (error) {
       console.error('=== DEBUG SLIP ERROR ===');
-      console.error(error.message || error);
+      console.error(error);
       console.error('========================');
 
       return client.replyMessage(event.replyToken, {
@@ -81,10 +81,20 @@ async function handleEvent(event) {
   }
 
   // ----------------------------------------------------
-  // กรณีที่ 2: พิมพ์ข้อความจดบันทึกเข้ามา
+  // กรณีที่ 2: พิมพ์ข้อความจดบันทึก หรือ กดปุ่ม Rich Menu
   // ----------------------------------------------------
   if (messageType === 'text') {
     const text = event.message.text.trim();
+
+    // 💡 ปรับเปลี่ยนข้อความปุ่มช่องแรกบน (กระปุกเงินออม) ให้เข้าสู่เว็บ SpendWise x น้องหนวด
+    if (text === 'กระปุกเงินออม' || text === 'SpendWise' || text === 'บันทึกรายรับรายจ่าย') {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '🌐 **SpendWise x น้องหนวด - บันทึกรายรับรายจ่ายของพี่วิว**\n\n' +
+              'พี่วิวสามารถเข้าไปทำรายการบันทึกรายรับ-รายจ่าย ดูสรุปภาพรวม และจัดการกระปุกเงินออมด้วยตัวเองได้ทางเว็บไซต์เลยครับเหมียว! 🐱🪙\n\n' +
+              '👉 [คลิกเพื่อเปิดเว็บ SpendWise](https://nongnuad-bot.onrender.com)'
+      });
+    }
 
     if (text === 'ส่งสลิป') {
       return client.replyMessage(event.replyToken, {
@@ -96,8 +106,7 @@ async function handleEvent(event) {
     if (text.startsWith('+') || text.startsWith('-')) {
       const isIncome = text.startsWith('+');
       const parts = text.slice(1).trim().split(' ');
-      
-      const amount = parseFloat(parts[0]); 
+      const amount = parseFloat(parts[0]);
       const note = parts.slice(1).join(' ') || (isIncome ? 'รายรับทั่วไป' : 'ค่าใช้จ่ายทั่วไป');
 
       if (isNaN(amount)) {
@@ -127,7 +136,7 @@ async function handleEvent(event) {
   }
 }
 
-// 3. ฟังก์ชัน AI อ่านสลิปด้วย Gemini 1.5 Flash (สกัด JSON แข็งแกร่ง ปลอดภัยจาก Syntax Error 🛠️)
+// 3. ฟังก์ชัน AI อ่านสลิปด้วย Gemini 1.5 Flash
 async function parseSlipWithAI(imageBuffer) {
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
@@ -145,15 +154,14 @@ async function parseSlipWithAI(imageBuffer) {
   const imagePart = {
     inlineData: {
       data: imageBuffer.toString('base64'),
-      mimeType: 'image/jpeg'
-    }
+      mimeType: 'image/jpeg',
+    },
   };
 
   const result = await model.generateContent([prompt, imagePart]);
   const responseText = result.response.text().trim();
   
-  // ใช้ Regex แบบปลอดภัย [\\s\(\S\)]* ดึงเฉพาะพื้นที่ภายในปีกกาคู่แรก ป้องกัน AI ใส่คำนำหรือคำลงท้ายแถมมา
-  const jsonMatch = responseText.match(/\{[\s\(\S\)]*\}/);
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error("Cannot parse JSON from Gemini response");
   }
