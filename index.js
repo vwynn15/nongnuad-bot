@@ -129,7 +129,7 @@ async function handleEvent(event) {
 
 // 3. ฟังก์ชัน AI อ่านสลิปด้วย Gemini 1.5 Flash
 async function parseSlipWithAI(imageBuffer) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
   const imagePart = {
     inlineData: {
